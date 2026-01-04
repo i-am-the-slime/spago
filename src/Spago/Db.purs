@@ -21,6 +21,8 @@ module Spago.Db
 
 import Spago.Prelude
 
+import Control.Promise (Promise)
+import Control.Promise as Promise
 import Data.Array as Array
 import Data.Codec.JSON as CJ
 import Data.Codec.JSON.Record as CJ.Record
@@ -51,23 +53,24 @@ type ConnectOptions =
   , logger :: String -> Effect Unit
   }
 
-connect :: ConnectOptions -> Effect Db
-connect { database, logger } = Uncurried.runEffectFn2 connectImpl database (Uncurried.mkEffectFn1 logger)
+connect :: ConnectOptions -> Aff Db
+connect { database, logger } =
+  Promise.toAffE $ Uncurried.runEffectFn2 connectImpl database (Uncurried.mkEffectFn1 logger)
 
-insertPackageSet :: Db -> PackageSet -> Effect Unit
-insertPackageSet db = Uncurried.runEffectFn2 insertPackageSetImpl db <<< packageSetToJs
+insertPackageSet :: Db -> PackageSet -> Aff Unit
+insertPackageSet db = Promise.toAffE <<< Uncurried.runEffectFn2 insertPackageSetImpl db <<< packageSetToJs
 
-insertPackageSetEntry :: Db -> PackageSetEntry -> Effect Unit
-insertPackageSetEntry db = Uncurried.runEffectFn2 insertPackageSetEntryImpl db <<< packageSetEntryToJs
+insertPackageSetEntry :: Db -> PackageSetEntry -> Aff Unit
+insertPackageSetEntry db = Promise.toAffE <<< Uncurried.runEffectFn2 insertPackageSetEntryImpl db <<< packageSetEntryToJs
 
-selectPackageSets :: Db -> Effect (Array PackageSet)
+selectPackageSets :: Db -> Aff (Array PackageSet)
 selectPackageSets db = do
-  packageSets <- Uncurried.runEffectFn1 selectPackageSetsImpl db
+  packageSets <- Promise.toAffE $ Uncurried.runEffectFn1 selectPackageSetsImpl db
   pure $ Array.mapMaybe packageSetFromJs packageSets
 
-selectLatestPackageSetByCompiler :: Db -> Version -> Effect (Maybe PackageSet)
+selectLatestPackageSetByCompiler :: Db -> Version -> Aff (Maybe PackageSet)
 selectLatestPackageSetByCompiler db compiler = do
-  maybePackageSet <- Nullable.toMaybe <$> Uncurried.runEffectFn2 selectLatestPackageSetByCompilerImpl db (Version.print compiler)
+  maybePackageSet <- Nullable.toMaybe <$> Promise.toAffE (Uncurried.runEffectFn2 selectLatestPackageSetByCompilerImpl db (Version.print compiler))
   pure $ packageSetFromJs =<< maybePackageSet
 
 {-
@@ -85,31 +88,31 @@ selectPackageSetEntriesByPackage db packageName version = do
   pure $ Array.mapMaybe packageSetEntryFromJs packageSetEntries
 -}
 
-getLastPull :: Db -> String -> Effect (Maybe DateTime)
+getLastPull :: Db -> String -> Aff (Maybe DateTime)
 getLastPull db key = do
-  maybePull <- Nullable.toMaybe <$> Uncurried.runEffectFn2 getLastPullImpl db key
+  maybePull <- Nullable.toMaybe <$> Promise.toAffE (Uncurried.runEffectFn2 getLastPullImpl db key)
   pure $ (Either.hush <<< DateTime.Format.unformat Internal.Format.iso8601DateTime) =<< maybePull
 
-updateLastPull :: Db -> String -> DateTime -> Effect Unit
-updateLastPull db key date = Uncurried.runEffectFn3 updateLastPullImpl db key (DateTime.Format.format Internal.Format.iso8601DateTime date)
+updateLastPull :: Db -> String -> DateTime -> Aff Unit
+updateLastPull db key date = Promise.toAffE $ Uncurried.runEffectFn3 updateLastPullImpl db key (DateTime.Format.format Internal.Format.iso8601DateTime date)
 
-getManifest :: Db -> PackageName -> Version -> Effect (Maybe Manifest)
+getManifest :: Db -> PackageName -> Version -> Aff (Maybe Manifest)
 getManifest db packageName version = do
-  maybeManifest <- Nullable.toMaybe <$> Uncurried.runEffectFn3 getManifestImpl db (PackageName.print packageName) (Version.print version)
+  maybeManifest <- Nullable.toMaybe <$> Promise.toAffE (Uncurried.runEffectFn3 getManifestImpl db (PackageName.print packageName) (Version.print version))
   pure $ (Either.hush <<< parseJson Manifest.codec) =<< maybeManifest
 
-insertManifest :: Db -> PackageName -> Version -> Manifest -> Effect Unit
-insertManifest db packageName version manifest = Uncurried.runEffectFn4 insertManifestImpl db (PackageName.print packageName) (Version.print version) (printJson Manifest.codec manifest)
+insertManifest :: Db -> PackageName -> Version -> Manifest -> Aff Unit
+insertManifest db packageName version manifest = Promise.toAffE $ Uncurried.runEffectFn4 insertManifestImpl db (PackageName.print packageName) (Version.print version) (printJson Manifest.codec manifest)
 
-getMetadata :: Db -> PackageName -> Effect (Maybe Metadata)
+getMetadata :: Db -> PackageName -> Aff (Maybe Metadata)
 getMetadata db packageName =
   getMetadataForPackages db [ packageName ]
     <#> Map.lookup packageName
 
-getMetadataForPackages :: Db -> Array PackageName -> Effect (Map PackageName Metadata)
+getMetadataForPackages :: Db -> Array PackageName -> Aff (Map PackageName Metadata)
 getMetadataForPackages db packageNames = do
-  metadataEntries <- Uncurried.runEffectFn2 getMetadataForPackagesImpl db (PackageName.print <$> packageNames)
-  now <- Now.nowDateTime
+  metadataEntries <- Promise.toAffE $ Uncurried.runEffectFn2 getMetadataForPackagesImpl db (PackageName.print <$> packageNames)
+  now <- liftEffect Now.nowDateTime
   pure
     $ metadataEntries
     #
@@ -125,13 +128,13 @@ getMetadataForPackages db packageNames = do
       )
     # Map.fromFoldable
 
-insertMetadata :: Db -> PackageName -> Metadata -> Effect Unit
+insertMetadata :: Db -> PackageName -> Metadata -> Aff Unit
 insertMetadata db packageName metadata@(Metadata { unpublished }) = do
-  now <- Now.nowDateTime
-  Uncurried.runEffectFn4 insertMetadataImpl db (PackageName.print packageName) (printJson Metadata.codec metadata) (DateTime.Format.format Internal.Format.iso8601DateTime now)
+  now <- liftEffect Now.nowDateTime
+  Promise.toAffE $ Uncurried.runEffectFn4 insertMetadataImpl db (PackageName.print packageName) (printJson Metadata.codec metadata) (DateTime.Format.format Internal.Format.iso8601DateTime now)
   -- we also do a pass of removing the cached manifests that have been unpublished
   for_ (Map.toUnfoldable unpublished :: Array _) \(Tuple version _) -> do
-    Uncurried.runEffectFn3 removeManifestImpl db (PackageName.print packageName) (Version.print version)
+    Promise.toAffE $ Uncurried.runEffectFn3 removeManifestImpl db (PackageName.print packageName) (Version.print version)
 
 --------------------------------------------------------------------------------
 -- Table types and conversions
@@ -232,32 +235,32 @@ packageSetCodec = CJ.named "PackageSet" $ CJ.Record.object
 --------------------------------------------------------------------------------
 -- FFI
 
-foreign import connectImpl :: EffectFn2 GlobalPath (EffectFn1 String Unit) Db
+foreign import connectImpl :: EffectFn2 GlobalPath (EffectFn1 String Unit) (Promise Db)
 
-foreign import insertPackageSetImpl :: EffectFn2 Db PackageSetJs Unit
+foreign import insertPackageSetImpl :: EffectFn2 Db PackageSetJs (Promise Unit)
 
-foreign import insertPackageSetEntryImpl :: EffectFn2 Db PackageSetEntryJs Unit
+foreign import insertPackageSetEntryImpl :: EffectFn2 Db PackageSetEntryJs (Promise Unit)
 
-foreign import selectLatestPackageSetByCompilerImpl :: EffectFn2 Db String (Nullable PackageSetJs)
+foreign import selectLatestPackageSetByCompilerImpl :: EffectFn2 Db String (Promise (Nullable PackageSetJs))
 
-foreign import selectPackageSetsImpl :: EffectFn1 Db (Array PackageSetJs)
+foreign import selectPackageSetsImpl :: EffectFn1 Db (Promise (Array PackageSetJs))
 
-foreign import selectPackageSetEntriesBySetImpl :: EffectFn2 Db String (Array PackageSetEntryJs)
+foreign import selectPackageSetEntriesBySetImpl :: EffectFn2 Db String (Promise (Array PackageSetEntryJs))
 
-foreign import selectPackageSetEntriesByPackageImpl :: EffectFn3 Db String String (Array PackageSetEntryJs)
+foreign import selectPackageSetEntriesByPackageImpl :: EffectFn3 Db String String (Promise (Array PackageSetEntryJs))
 
-foreign import getLastPullImpl :: EffectFn2 Db String (Nullable String)
+foreign import getLastPullImpl :: EffectFn2 Db String (Promise (Nullable String))
 
-foreign import updateLastPullImpl :: EffectFn3 Db String String Unit
+foreign import updateLastPullImpl :: EffectFn3 Db String String (Promise Unit)
 
-foreign import getManifestImpl :: EffectFn3 Db String String (Nullable String)
+foreign import getManifestImpl :: EffectFn3 Db String String (Promise (Nullable String))
 
-foreign import insertManifestImpl :: EffectFn4 Db String String String Unit
+foreign import insertManifestImpl :: EffectFn4 Db String String String (Promise Unit)
 
-foreign import removeManifestImpl :: EffectFn3 Db String String Unit
+foreign import removeManifestImpl :: EffectFn3 Db String String (Promise Unit)
 
-foreign import getMetadataImpl :: EffectFn2 Db String (Nullable MetadataEntryJs)
+foreign import getMetadataImpl :: EffectFn2 Db String (Promise (Nullable MetadataEntryJs))
 
-foreign import getMetadataForPackagesImpl :: EffectFn2 Db (Array String) (Array MetadataEntryJs)
+foreign import getMetadataForPackagesImpl :: EffectFn2 Db (Array String) (Promise (Array MetadataEntryJs))
 
-foreign import insertMetadataImpl :: EffectFn4 Db String String String Unit
+foreign import insertMetadataImpl :: EffectFn4 Db String String String (Promise Unit)

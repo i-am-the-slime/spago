@@ -195,7 +195,7 @@ getRegistryFns registryBox registryLock = do
   updatePackageSetsDb db = do
     { logOptions } <- ask
     setsAvailable <- map Set.fromFoldable getAvailablePackageSets
-    setsInDb <- map (Set.fromFoldable <<< map _.version) (liftEffect $ Db.selectPackageSets db)
+    setsInDb <- map (Set.fromFoldable <<< map _.version) (liftAff $ Db.selectPackageSets db)
     let setsToInsert = Set.difference setsAvailable setsInDb
 
     unless (Set.isEmpty setsToInsert) do
@@ -203,10 +203,10 @@ getRegistryFns registryBox registryLock = do
         PackageSet set <- runSpago { logOptions } (readPackageSetImpl setVersion)
         -- First insert the package set
         logDebug $ "Inserting package set in DB: " <> Version.print setVersion
-        liftEffect $ Db.insertPackageSet db { compiler: set.compiler, date: set.published, version: set.version }
+        liftAff $ Db.insertPackageSet db { compiler: set.compiler, date: set.published, version: set.version }
         -- Then we insert every entry separately
         for_ (Map.toUnfoldable set.packages :: Array _) \(Tuple name version) -> do
-          liftEffect $ Db.insertPackageSetEntry db { packageName: name, packageVersion: version, packageSetVersion: set.version }
+          liftAff $ Db.insertPackageSetEntry db { packageName: name, packageVersion: version, packageSetVersion: set.version }
 
   -- | List all the package sets versions available in the Registry repo
   getAvailablePackageSets :: ∀ a. Spago (LogEnv a) (Array Version)
@@ -252,7 +252,7 @@ getMetadataForPackagesImpl db onlineStatus names = do
       parTraverseSpago metadataFromFile names
     false -> do
       -- the first layer of caching is in the DB, so we try that first
-      metadatas <- liftEffect $ Db.getMetadataForPackages db names
+      metadatas <- liftAff $ Db.getMetadataForPackages db names
       parTraverseSpago
         ( \name -> do
             case Map.lookup name metadatas of
@@ -270,13 +270,13 @@ getMetadataForPackagesImpl db onlineStatus names = do
       Left e -> pure $ Left e
       Right m -> do
         -- memoize it if found
-        liftEffect (Db.insertMetadata db pkgName m)
+        liftAff (Db.insertMetadata db pkgName m)
         pure $ Right (pkgName /\ m)
 
 -- Manifests are immutable so we can just lookup in the DB or read from file if not there
 getManifestFromIndexImpl :: Db -> PackageName -> Version -> Spago (LogEnv ()) (Maybe Manifest)
 getManifestFromIndexImpl db name version = do
-  liftEffect (Db.getManifest db name version) >>= case _ of
+  liftAff (Db.getManifest db name version) >>= case _ of
     Just manifest -> pure (Just manifest)
     Nothing -> do
       -- if we don't have it we need to read it from file
@@ -292,18 +292,18 @@ getManifestFromIndexImpl db name version = do
       -- and memoize it
       for_ manifests \(Tuple _ manifest@(Manifest m)) -> do
         logDebug $ "Inserting manifest in DB: " <> PackageName.print name <> " v" <> Version.print m.version
-        liftEffect $ Db.insertManifest db name m.version manifest
+        liftAff $ Db.insertManifest db name m.version manifest
       pure (Map.lookup version versions)
 
 listPackageSetsImpl :: Spago (PreRegistryEnv _) (Array Db.PackageSet)
 listPackageSetsImpl = do
   { db } <- ask
-  liftEffect $ Db.selectPackageSets db
+  liftAff $ Db.selectPackageSets db
 
 findPackageSetImpl :: forall a. Maybe Version -> Spago (PreRegistryEnv a) Version
 findPackageSetImpl maybeSet = do
   { db, purs } <- ask
-  availableSets <- liftEffect $ Db.selectPackageSets db
+  availableSets <- liftAff $ Db.selectPackageSets db
   let availableVersions = map _.version availableSets
 
   case maybeSet of
@@ -314,7 +314,7 @@ findPackageSetImpl maybeSet = do
         <> map (indent <<< toDoc <<< Version.print) (Array.sort availableVersions)
     -- no set in input: read the compiler version, get the latest set matching
     Nothing -> do
-      maybeVersion <- liftEffect $ Db.selectLatestPackageSetByCompiler db purs.version
+      maybeVersion <- liftAff $ Db.selectLatestPackageSetByCompiler db purs.version
       case maybeVersion of
         -- if we get a version, all good
         Just { version } -> pure version
@@ -354,12 +354,12 @@ shouldFetchRegistryRepos :: ∀ a. Db -> Spago (LogEnv a) Boolean
 shouldFetchRegistryRepos db = do
   now <- liftEffect $ Now.nowDateTime
   let registryKey = "registry"
-  maybeLastRegistryFetch <- liftEffect $ Db.getLastPull db registryKey
+  maybeLastRegistryFetch <- liftAff $ Db.getLastPull db registryKey
   case maybeLastRegistryFetch of
     -- No record, so we have to fetch
     Nothing -> do
       logDebug "No record of last registry pull, will fetch"
-      liftEffect $ Db.updateLastPull db registryKey now
+      liftAff $ Db.updateLastPull db registryKey now
       pure true
     -- We have a record, so we check if it's old enough
     Just lastRegistryFetch -> do
@@ -370,7 +370,7 @@ shouldFetchRegistryRepos db = do
       registryExists <- FS.exists Paths.registryPath
       if isOldEnough || not registryExists then do
         logDebug "Registry is old, refreshing"
-        liftEffect $ Db.updateLastPull db registryKey now
+        liftAff $ Db.updateLastPull db registryKey now
         pure true
       else do
         pure false

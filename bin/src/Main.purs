@@ -997,7 +997,7 @@ mkRegistryEnv offline = do
   -- Make sure we have git and purs
   git <- Git.getGit
   purs <- Purs.getPurs
-  db <- liftEffect $ Db.connect
+  db <- liftAff $ Db.connect
     { database: Paths.databasePath
     , logger: \str -> Reader.runReaderT (logDebug $ "DB: " <> str) { logOptions }
     }
