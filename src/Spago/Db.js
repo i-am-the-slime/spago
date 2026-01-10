@@ -1,165 +1,163 @@
-import { createClient } from "@libsql/client";
+import { DatabaseSync } from "node:sqlite";
 import fs from "node:fs";
 import path from "node:path";
 
-const createStatements = [
-  `CREATE TABLE IF NOT EXISTS package_sets
-    ( version TEXT PRIMARY KEY NOT NULL
-    , compiler TEXT NOT NULL
-    , date TEXT NOT NULL
-    )`,
-  `CREATE TABLE IF NOT EXISTS package_set_entries
-    ( packageSetVersion TEXT NOT NULL
-    , packageName TEXT NOT NULL
-    , packageVersion TEXT NOT NULL
-    , PRIMARY KEY (packageSetVersion, packageName, packageVersion)
-    , FOREIGN KEY (packageSetVersion) REFERENCES package_sets(version)
-    )`,
-  `CREATE TABLE IF NOT EXISTS last_git_pull
-    ( key TEXT PRIMARY KEY NOT NULL
-    , date TEXT NOT NULL
-    )`,
-  `CREATE TABLE IF NOT EXISTS package_metadata
-    ( name TEXT PRIMARY KEY NOT NULL
-    , metadata TEXT NOT NULL
-    , last_fetched TEXT NOT NULL
-    )`,
-  // it would be lovely if we'd have a foreign key on package_metadata, but that would
-  // require reading metadata before manifests, which we can't always guarantee
-  `CREATE TABLE IF NOT EXISTS package_manifests
-    ( name TEXT NOT NULL
-    , version TEXT NOT NULL
-    , manifest TEXT NOT NULL
-    , PRIMARY KEY (name, version)
-    )`,
-];
+export const connectImpl = (databasePath, logger) => {
+  return Promise.resolve().then(() => {
+    logger("Connecting to database at " + databasePath);
 
-const ensureLocalDirectory = (filePath) => {
-  if (!filePath) return;
-  try {
-    fs.mkdirSync(path.dirname(filePath), { recursive: true });
-  } catch (err) {
-    // ignore filesystem errors here; connect will fail and report later
-  }
+    // Ensure directory exists
+    try {
+      const dir = path.dirname(databasePath);
+      if (dir) {
+        fs.mkdirSync(dir, { recursive: true });
+      }
+    } catch (err) {
+      // ignore - will fail later if needed
+    }
+
+    const db = new DatabaseSync(databasePath, {
+      enableForeignKeyConstraints: true,
+    });
+
+    db.exec("PRAGMA journal_mode = WAL");
+    db.exec("PRAGMA foreign_keys = ON");
+
+    db.prepare(`CREATE TABLE IF NOT EXISTS package_sets
+      ( version TEXT PRIMARY KEY NOT NULL
+      , compiler TEXT NOT NULL
+      , date TEXT NOT NULL
+      )`).run();
+    db.prepare(`CREATE TABLE IF NOT EXISTS package_set_entries
+      ( packageSetVersion TEXT NOT NULL
+      , packageName TEXT NOT NULL
+      , packageVersion TEXT NOT NULL
+      , PRIMARY KEY (packageSetVersion, packageName, packageVersion)
+      , FOREIGN KEY (packageSetVersion) REFERENCES package_sets(version)
+      )`).run();
+    db.prepare(`CREATE TABLE IF NOT EXISTS last_git_pull
+      ( key TEXT PRIMARY KEY NOT NULL
+      , date TEXT NOT NULL
+      )`).run();
+    db.prepare(`CREATE TABLE IF NOT EXISTS package_metadata
+      ( name TEXT PRIMARY KEY NOT NULL
+      , metadata TEXT NOT NULL
+      , last_fetched TEXT NOT NULL
+      )`).run();
+    // it would be lovely if we'd have a foreign key on package_metadata, but that would
+    // require reading metadata before manifests, which we can't always guarantee
+    db.prepare(`CREATE TABLE IF NOT EXISTS package_manifests
+      ( name TEXT NOT NULL
+      , version TEXT NOT NULL
+      , manifest TEXT NOT NULL
+      , PRIMARY KEY (name, version)
+      )`).run();
+    return db;
+  });
 };
 
-const toRows = (result) => result?.rows ?? [];
-
-export const connectImpl = async (databasePath, logger) => {
-  const tursoUrl = process.env.TURSO_DATABASE_URL;
-  const tursoAuthToken = process.env.TURSO_AUTH_TOKEN;
-  const url = tursoUrl ?? `file:${databasePath}`;
-
-  if (!tursoUrl) {
-    ensureLocalDirectory(databasePath);
-    logger("Connecting to local libSQL file at " + databasePath);
-  } else {
-    logger("Connecting to Turso at " + tursoUrl);
-  }
-
-  const db = createClient({ url, authToken: tursoAuthToken });
-
-  await db.execute("PRAGMA foreign_keys = ON");
-  for (const statement of createStatements) {
-    await db.execute(statement);
-  }
-
-  return db;
+export const insertPackageSetImpl = (db, packageSet) => {
+  return Promise.resolve().then(() => {
+    db.prepare(
+      "INSERT INTO package_sets (version, compiler, date) VALUES (@version, @compiler, @date)"
+    ).run(packageSet);
+  });
 };
 
-const executeStmt = async (db, sql, args = []) => {
-  if (typeof db.prepare === "function") {
-    const stmt = await db.prepare(sql);
-    return stmt.execute(args);
-  }
-  // Fallback to execute for client implementations without prepare
-  return db.execute({ sql, args });
+export const insertPackageSetEntryImpl = (db, packageSetEntry) => {
+  return Promise.resolve().then(() => {
+    db.prepare(
+      "INSERT INTO package_set_entries (packageSetVersion, packageName, packageVersion) VALUES (@packageSetVersion, @packageName, @packageVersion)"
+    ).run(packageSetEntry);
+  });
 };
 
-const getRow = async (db, sql, args = []) => {
-  const result = await executeStmt(db, sql, args);
-  return toRows(result)[0];
+export const selectLatestPackageSetByCompilerImpl = (db, compiler) => {
+  return Promise.resolve().then(() => {
+    const row = db
+      .prepare("SELECT * FROM package_sets WHERE compiler = ? ORDER BY date DESC LIMIT 1")
+      .get(compiler);
+    return row;
+  });
 };
 
-const getRows = async (db, sql, args = []) => {
-  const result = await executeStmt(db, sql, args);
-  return toRows(result);
+export const selectPackageSetsImpl = (db) => {
+  return Promise.resolve().then(() => {
+    const rows = db.prepare("SELECT * FROM package_sets ORDER BY date ASC").all();
+    return rows;
+  });
 };
 
-const run = (db, sql, args = []) => executeStmt(db, sql, args);
-
-export const insertPackageSetImpl = (db, packageSet) =>
-  run(db, "INSERT INTO package_sets (version, compiler, date) VALUES (?, ?, ?)", [
-    packageSet.version,
-    packageSet.compiler,
-    packageSet.date,
-  ]);
-
-export const insertPackageSetEntryImpl = (db, packageSetEntry) =>
-  run(
-    db,
-    "INSERT INTO package_set_entries (packageSetVersion, packageName, packageVersion) VALUES (?, ?, ?)",
-    [packageSetEntry.packageSetVersion, packageSetEntry.packageName, packageSetEntry.packageVersion]
-  );
-
-export const selectLatestPackageSetByCompilerImpl = (db, compiler) =>
-  getRow(
-    db,
-    "SELECT * FROM package_sets WHERE compiler = ? ORDER BY date DESC LIMIT 1",
-    [compiler]
-  );
-
-export const selectPackageSetsImpl = (db) =>
-  getRows(db, "SELECT * FROM package_sets ORDER BY date ASC");
-
-export const selectPackageSetEntriesBySetImpl = (db, packageSetVersion) =>
-  getRows(db, "SELECT * FROM package_set_entries WHERE packageSetVersion = ?", [packageSetVersion]);
-
-export const selectPackageSetEntriesByPackageImpl = (db, packageName, packageVersion) =>
-  getRows(
-    db,
-    "SELECT * FROM package_set_entries WHERE packageName = ? AND packageVersion = ?",
-    [packageName, packageVersion]
-  );
-
-export const getLastPullImpl = async (db, key) => {
-  const row = await getRow(db, "SELECT * FROM last_git_pull WHERE key = ? LIMIT 1", [key]);
-  return row?.date ?? null;
+export const selectPackageSetEntriesBySetImpl = (db, packageSetVersion) => {
+  return Promise.resolve().then(() => {
+    const rows = db
+      .prepare("SELECT * FROM package_set_entries WHERE packageSetVersion = ?")
+      .all(packageSetVersion);
+    return rows;
+  });
 };
 
-export const updateLastPullImpl = (db, key, date) =>
-  run(db, "INSERT OR REPLACE INTO last_git_pull (key, date) VALUES (?, ?)", [key, date]);
-
-export const getManifestImpl = async (db, name, version) => {
-  const row = await getRow(
-    db,
-    "SELECT * FROM package_manifests WHERE name = ? AND version = ? LIMIT 1",
-    [name, version]
-  );
-  return row?.manifest ?? null;
+export const selectPackageSetEntriesByPackageImpl = (db, packageName, packageVersion) => {
+  return Promise.resolve().then(() => {
+    const rows = db
+      .prepare("SELECT * FROM package_set_entries WHERE packageName = ? AND packageVersion = ?")
+      .all(packageName, packageVersion);
+    return rows;
+  });
 };
 
-export const insertManifestImpl = (db, name, version, manifest) =>
-  run(db, "INSERT OR IGNORE INTO package_manifests (name, version, manifest) VALUES (?, ?, ?)", [
-    name,
-    version,
-    manifest,
-  ]);
+export const getLastPullImpl = (db, key) => {
+  return Promise.resolve().then(() => {
+    const row = db
+      .prepare("SELECT * FROM last_git_pull WHERE key = ? LIMIT 1")
+      .get(key);
+    return row?.date;
+  });
+};
 
-export const removeManifestImpl = (db, name, version) =>
-  run(db, "DELETE FROM package_manifests WHERE name = ? AND version = ?", [name, version]);
+export const updateLastPullImpl = (db, key, date) => {
+  return Promise.resolve().then(() => {
+    db.prepare("INSERT OR REPLACE INTO last_git_pull (key, date) VALUES (?, ?)").run(key, date);
+  });
+};
 
-export const insertMetadataImpl = (db, name, metadata, last_fetched) =>
-  run(db, "INSERT OR REPLACE INTO package_metadata (name, metadata, last_fetched) VALUES (?, ?, ?)", [
-    name,
-    metadata,
-    last_fetched,
-  ]);
+export const getManifestImpl = (db, name, version) => {
+  return Promise.resolve().then(() => {
+    const row = db
+      .prepare("SELECT * FROM package_manifests WHERE name = ? AND version = ? LIMIT 1")
+      .get(name, version);
+    return row?.manifest;
+  });
+};
 
-export const getMetadataImpl = (db, name) =>
-  getRow(db, "SELECT * FROM package_metadata WHERE name = ? LIMIT 1", [name]);
+export const insertManifestImpl = (db, name, version, manifest) => {
+  return Promise.resolve().then(() => {
+    db.prepare("INSERT OR IGNORE INTO package_manifests (name, version, manifest) VALUES (?, ?, ?)").run(
+      name,
+      version,
+      manifest
+    );
+  });
+};
 
-export const getMetadataForPackagesImpl = (db, names) =>
-  getRows(db, "SELECT * FROM package_metadata WHERE name IN (SELECT value FROM json_each(?))", [
-    JSON.stringify(names),
-  ]);
+export const removeManifestImpl = (db, name, version) => {
+  return Promise.resolve().then(() => {
+    db.prepare("DELETE FROM package_manifests WHERE name = ? AND version = ?").run(name, version);
+  });
+};
+
+export const insertMetadataImpl = (db, name, metadata, last_fetched) => {
+  return Promise.resolve().then(() => {
+    db.prepare(
+      "INSERT OR REPLACE INTO package_metadata (name, metadata, last_fetched) VALUES (@name, @metadata, @last_fetched)"
+    ).run({ name, metadata, last_fetched });
+  });
+};
+
+export const getMetadataForPackagesImpl = (db, names) => {
+  return Promise.resolve().then(() => {
+    // There can be a lot of package names here, potentially hitting the max number of sqlite parameters, so we use json to bypass this
+    const query = db.prepare("SELECT * FROM package_metadata WHERE name IN (SELECT value FROM json_each(?));");
+    return query.all(JSON.stringify(names));
+  });
+};

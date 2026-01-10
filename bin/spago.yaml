@@ -31,5 +31,3 @@ package:
     minify: false
     platform: node
     type: app
-    extraArgs:
-      - "--external:@libsql/client"
