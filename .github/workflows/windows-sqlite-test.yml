@@ -15,9 +15,7 @@ jobs:
         with:
           node-version: 22
 
-      - uses: purescript-contrib/setup-purescript@main
-        with:
-          purescript: "0.15.15"
+      - run: npm i -g purescript@0.15.15
 
       - name: Test spago init
         run: |
