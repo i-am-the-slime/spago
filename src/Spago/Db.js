@@ -11,11 +11,10 @@ export const connectImpl = (databasePath, logger) => {
 
   const db = new DatabaseSync(databasePath, {
     enableForeignKeyConstraints: true,
+    timeout: 5000, // Wait up to 5s if database is locked (matches better-sqlite3 default)
   });
 
   db.exec("PRAGMA journal_mode = WAL");
-  db.exec("PRAGMA busy_timeout = 5000"); // Wait up to 5s if database is locked (matches better-sqlite3 default)
-  db.exec("PRAGMA foreign_keys = ON");
 
   db.prepare(`CREATE TABLE IF NOT EXISTS package_sets
     ( version TEXT PRIMARY KEY NOT NULL
