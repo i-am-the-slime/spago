@@ -11,13 +11,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup node
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: 22
 
-      - name: Install purescript
-        run: npm i -g purescript@0.15.15
+      - uses: purescript-contrib/setup-purescript@main
+        with:
+          purescript: "0.15.15"
+          spago: "false"
+          psa: "false"
 
       - name: Test spago init
         run: |
