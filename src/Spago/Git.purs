@@ -67,7 +67,7 @@ fetchRepo { git, ref } path = do
           logInfo $ "Cloning " <> git
           -- For the reasoning on the filter options, see:
           -- https://github.com/purescript/spago/issues/701#issuecomment-1317192919
-          Except.runExceptT $ runGit_ [ "clone", "--filter=tree:0", git, Path.toRaw path ] Nothing
+          Except.runExceptT $ runGit_ [ "clone", "--depth=1", "--filter=tree:0", git, Path.toRaw path ] Nothing
       result <- Except.runExceptT do
         Except.ExceptT $ pure cloneOrFetchResult
         logDebug $ "Checking out the requested ref for " <> git <> " : " <> ref
