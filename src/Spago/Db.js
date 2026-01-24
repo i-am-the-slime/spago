@@ -60,6 +60,17 @@ export const insertPackageSetEntryImpl = (db, packageSetEntry) => {
   ).run(packageSetEntry);
 }
 
+export const withTransactionImpl = (db, action) => {
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    action();
+    db.exec("COMMIT");
+  } catch (e) {
+    db.exec("ROLLBACK");
+    throw e;
+  }
+}
+
 export const selectLatestPackageSetByCompilerImpl = (db, compiler) => {
   const row = db
     .prepare("SELECT * FROM package_sets WHERE compiler = @compiler ORDER BY date DESC LIMIT 1")
