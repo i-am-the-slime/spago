@@ -2,65 +2,21 @@ name: windows-sqlite-test
 
 on:
   push:
-    branches: [turso-libsql]
+    branches: [test-windows-sqlite]
   workflow_dispatch:
 
 jobs:
   test:
     runs-on: windows-latest
     steps:
-      - name: Set git to use LF
-        run: |
-          git config --global core.autocrlf false
-          git config --global core.eol lf
-          git config --global core.longpaths true
-
       - uses: actions/checkout@v4
 
-      - name: Setup node and npm
+      - name: Setup node
         uses: actions/setup-node@v4
         with:
           node-version: 22
 
-      - name: Cache NPM dependencies
-        uses: actions/cache@v4
-        env:
-          cache-name: cache-node-modules
-        with:
-          path: |
-            ~/.npm
-            $APPDATA/npm
-            node_modules
-          key: ${{ runner.os }}-build-${{ env.cache-name }}-${{ hashFiles('**/package.json') }}
-          restore-keys: |
-            ${{ runner.os }}-build-${{ env.cache-name }}-
-            ${{ runner.os }}-build-
-            ${{ runner.os }}-
-
-      - name: Cache PureScript dependencies
-        uses: actions/cache@v4
-        with:
-          key: ${{ runner.os }}-spago-${{ hashFiles('**/spago.yaml') }}
-          path: |
-            .spago
-            output
-
-      - name: Install global NPM packages
-        run: npm i --global purescript@0.15.15 spago@next purs-tidy@latest esbuild@latest
-
-      - name: Install NPM dependencies
-        run: npm ci
-
-      - name: Install PureScript dependencies
-        run: spago install
-
-      - name: Build the project
-        run: spago build
-
-      - name: Bootstrap executable
-        run: node ./bin/index.dev.js bundle -p spago-bin
-
-      - name: Test spago init (the failing command)
+      - name: Test spago init
         run: |
           mkdir test-init
           cd test-init
