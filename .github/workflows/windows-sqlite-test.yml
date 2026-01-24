@@ -16,6 +16,9 @@ jobs:
         with:
           node-version: 22
 
+      - name: Install purescript
+        run: npm i -g purescript@0.15.15
+
       - name: Test spago init
         run: |
           mkdir test-init
